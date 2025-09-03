@@ -1,4 +1,3 @@
-
 # llm-fillin
 
 **LLM-powered slot filling + tool orchestration for Ruby.**  
@@ -43,10 +42,10 @@ YOU: yes
 
 ## How it works (Architecture)
 
-When you talk to the assistant, several components collaborate:
+When you interact with the assistant, several components collaborate:
 
 ### 1) Registry
-The `Registry` is where you **register tools** (functions) that the LLM can call.  
+The `Registry` is where tools (functions) are registered so the LLM can call them.  
 Each tool has:
 - `name` + `version`
 - `schema` (JSON Schema that defines the inputs)
@@ -63,71 +62,65 @@ registry.register!(
 )
 ```
 
-This makes the tool visible to the LLM. The schema ensures the AI knows **what fields to collect**.
-
 ### 2) Validators
-Before calling your handler, the orchestrator runs all arguments through `Validators`.  
-It uses [`json_schemer`](https://github.com/davishmcclurg/json_schemer) to enforce:
-- Required fields exist
-- Field types are correct (string, integer, enum values)
-- No extra fields sneak in
+All arguments are validated with [`json_schemer`](https://github.com/davishmcclurg/json_schemer) before a handler is called:
+- Required fields must exist
+- Types must match (string, integer, enum, etc.)
+- No unexpected fields are allowed
 
-This prevents the LLM from passing junk or unsafe data into your backend.
+This keeps your backend safe.
 
 ### 3) Idempotency
-For creates (e.g., invoices, toys, registrations), avoid duplicates if the same request runs twice.  
-
-`Idempotency.generate(thread_id:)` creates a unique key:
+When creating resources, an idempotency key is generated with:
 ```ruby
 "chat-<thread_id>-#{SecureRandom.hex(6)}"
 ```
-Handlers include this key when persisting. If the same request repeats, your backend can safely return the original object instead of creating a duplicate.
+This ensures the same request doesn’t create duplicates.
 
 ### 4) Orchestrator
-The `Orchestrator` is the central loop:
-- Supplies your tools (from `Registry`) to the LLM
-- Tracks conversation state (including tool results)
-- Receives LLM output
-- Decides: clarifying question vs. tool call
-- Validates args and runs the `handler`
-- Stores tool results back in the memory store
+The orchestrator coordinates everything:
+- Supplies registered tools to the LLM
+- Tracks conversation state and tool results
+- Parses LLM output (text vs. function call)
+- Validates arguments and calls the handler
+- Stores tool results in memory
 
-This is what lets the AI ask:  
-> “I need the category — plush, puzzle, doll, car, lego, or other?”
+This is what lets the AI ask for missing fields naturally.
 
 ### 5) Adapters
-Adapters wrap the actual LLM API. We ship an `OpenAIAdapter`, which:
+Adapters handle communication with the LLM.  
+Currently there’s an `OpenAIAdapter` that:
 - Sends prompts, tools, and messages to OpenAI
 - Parses responses (`tool_calls` or legacy `function_call`)
-- Wraps tool results to feed back into the conversation
+- Wraps tool results for reuse in the conversation
 
-You can later plug in other providers by writing another adapter.
+Other adapters could be added later for Anthropic, Mistral, or local LLMs.
 
 ### 6) StoreMemory
-A minimal in-memory store that holds past tool call results by thread.  
-Swap this for Redis/DB in production to persist across restarts and scale horizontally.
+A simple in-memory store for tool results by thread.  
+In production, this could be replaced by Redis or a database.
 
 ---
 
 ## End-to-End Flow
 1. **User says**: `"I want a red race car toy for $12"`.
-2. **LLM parses intent**: `"create_toy_v1"`.
-3. **LLM fills slots**: `price = 1200`, `color = red`. Missing: `name`, `category`.
+2. **LLM identifies intent**: `"create_toy_v1"`.
+3. **LLM fills slots**: price = 1200, color = red. Missing: name, category.
 4. **LLM asks user**: “What’s the name?” → “Supra”.
 5. **LLM asks user**: “Is the category car?” → “make it lego”.
 6. **Arguments validated** by `Validators`.
-7. **Handler called** with `args + context + idempotency_key`.
-8. **Result returned**: structured Ruby hash (toy ID, name, category, etc.).
-9. **Assistant tells the user**: ✅ Toy created.
+7. **Handler executes** with args + context + idempotency key.
+8. **Result returned**: structured hash (toy ID, name, category, etc.).
+9. **Assistant replies**: ✅ Toy created.
 
 ---
 
 ## Use in your app
-- Define your tools (schemas + handlers).
+- Define tools (schemas + handlers).
 - Register them in the `Registry`.
 - Wire the `Orchestrator` with an `Adapter` and a `Store`.
-- Pass user messages into `orchestrator.step`.
-- Handle outputs (`:assistant` text or `:tool_ran` results).
+- Pass messages into `orchestrator.step`.
+- Handle either assistant replies or tool execution results.
 
 ---
 
