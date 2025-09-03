@@ -40,6 +40,103 @@ YOU: yes
 
 ---
 
+## Quick Start (using as a gem)
+
+Once you’ve installed the gem:
+
+```ruby
+gem "llm-fillin"
+```
+
+and bundled:
+
+```bash
+bundle install
+```
+
+You can use it in your app like this:
+
+```ruby
+require "llm/fillin"
+require "json"
+
+# 1. Create a registry and register your tools
+registry = LLM::Fillin::Registry.new
+
+CREATE_TOY_V1 = {
+  "type" => "object",
+  "properties" => {
+    "name"     => { "type" => "string" },
+    "category" => { "type" => "string", "enum" => %w[plush puzzle doll car lego other] },
+    "price"    => { "type" => "integer" },
+    "color"    => { "type" => "string" }
+  },
+  "required" => %w[name category price color]
+}
+
+registry.register!(
+  name: "create_toy", version: "v1",
+  schema: CREATE_TOY_V1,
+  description: "Create a toy with name, category, price, and color.",
+  handler: ->(args, ctx) {
+    key = "chat-#{ctx[:thread_id]}-#{SecureRandom.hex(6)}"
+    { id: "TOY-#{SecureRandom.hex(4)}", idempotency_key: key }.merge(args)
+  }
+)
+
+# 2. Set up the adapter, store, and orchestrator
+adapter = LLM::Fillin::OpenAIAdapter.new(
+  api_key: ENV.fetch("OPENAI_API_KEY"),
+  model: "gpt-4o-mini"
+)
+
+store = LLM::Fillin::StoreMemory.new
+orchestrator = LLM::Fillin::Orchestrator.new(
+  adapter: adapter,
+  registry: registry,
+  store: store
+)
+
+# 3. Send messages through the orchestrator
+thread_id = "demo-thread"
+tenant_id = "demo-tenant"
+actor_id  = "demo-user"
+
+loop do
+  print "YOU: "
+  user_input = STDIN.gets.strip
+  break if user_input.empty?
+
+  res = orchestrator.step(
+    thread_id: thread_id,
+    tenant_id: tenant_id,
+    actor_id: actor_id,
+    messages: [{ role: "user", content: user_input }]
+  )
+
+  case res[:type]
+  when :assistant
+    puts "AI: #{res[:text]}"
+  when :tool_ran
+    puts "✅ Tool ran: #{res[:tool_name]} => #{res[:result].to_json}"
+  end
+end
+```
+
+### Example Run
+```text
+YOU: create me a toy for $15
+AI: Got it! What’s the name of the toy?
+YOU: Pikachu
+AI: Great, should the category be plush, puzzle, doll, car, lego, or other?
+YOU: plush
+AI: And what color should Pikachu be?
+YOU: yellow
+✅ Tool ran: create_toy => {"id":"TOY-5A9F","idempotency_key":"chat-demo-thread-...","name":"Pikachu","category":"plush","price":1500,"color":"yellow"}
+```
+
+---
+
 ## How it works (Architecture)
 
 When you interact with the assistant, several components collaborate:
