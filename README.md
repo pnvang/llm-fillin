@@ -45,29 +45,29 @@ YOU: yes
 
 ```mermaid
 flowchart TD
-  U[User (Chat/App/Bot)] -->|natural language| O[Orchestrator]
+  U[User (Chat/App/Bot)] -- natural language --> O[Orchestrator]
 
-  subgraph Registry & Validation
-    R[Registry<br/>name+version+schema+handler]
-    V[Validators<br/>(json_schemer)]
-    I[Idempotency<br/>chat-<thread>-<hex>]
+  subgraph Registry_Validation [Registry & Validation]
+    R[Registry\nname + version + schema + handler]
+    V[Validators\n(json_schemer)]
+    I[Idempotency\nchat-{thread}-{hex}]
   end
 
-  O -->|tools (schemas + descriptions)| L[LLM Adapter]
-  L -->|messages + tools| LLM[LLM (OpenAI)]
-  LLM -->|assistant text or tool call| O
+  O -- tools (schemas + descriptions) --> L[LLM Adapter]
+  L -- messages + tools --> LLM[LLM (OpenAI)]
+  LLM -- assistant text or tool call --> O
 
-  O -->|validate args| V
-  O -->|resolve tool| R
-  O -->|generate key| I
-  O -->|call handler(args+ctx+key)| H[Handlers]
-  H -->|result (IDs, JSON)| O
+  O -- validate args --> V
+  O -- resolve tool --> R
+  O -- generate key --> I
+  O -- call handler(args + ctx + key) --> H[Handlers]
+  H -- result (IDs, JSON) --> O
 
-  O -->|tool result message| L
-  O -->|final reply| U
+  O -- tool result message --> L
+  O -- final reply --> U
 
   subgraph Infra
-    S[StoreMemory/Redis<br/>tool results by thread]
+    S[StoreMemory / Redis\n(tool results by thread)]
   end
   O <--> S
 ```
@@ -155,29 +155,12 @@ Swap this for Redis/DB in production to persist across restarts and scale horizo
 
 ---
 
-## Why llm-fillin?
-- ✅ **Safe**: schema validation protects your backend.  
-- ✅ **Deterministic**: idempotency prevents duplicates.  
-- ✅ **Extensible**: just add new tools (create_user, lookup_balance, send_reminder).  
-- ✅ **LLM-agnostic**: swap adapters without changing app logic.  
-- ✅ **Conversational**: AI asks for missing fields naturally.
-
----
-
 ## Use in your app
 - Define your tools (schemas + handlers).
 - Register them in the `Registry`.
 - Wire the `Orchestrator` with an `Adapter` and a `Store`.
 - Pass user messages into `orchestrator.step`.
 - Handle outputs (`:assistant` text or `:tool_ran` results).
-
----
-
-## Versioning & Releases
-- Bump `lib/llm/fillin/version.rb` for each release.
-- (Recommended) In your gemspec: `s.version = LLM::Fillin::VERSION` so it reads from one place.
-- Tag and draft a GitHub Release (e.g., `v0.1.1`) with notes.
-- `gem build` and `gem push` to publish to RubyGems.
 
 ---
 
