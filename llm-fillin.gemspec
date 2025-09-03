@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 Gem::Specification.new do |s|
   s.name        = "llm-fillin"
-  s.version     = "0.1.0"
+  s.version     = "0.1.1"
   s.summary     = "LLM-powered slot filling and tool orchestration for Ruby."
   s.description = "Register JSON-schema tools and let an LLM handle intent, slot-filling, and tool calls safely."
   s.authors     = ["Phia Vang"]
