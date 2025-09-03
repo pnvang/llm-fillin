@@ -41,39 +41,6 @@ YOU: yes
 
 ---
 
-## Mermaid Architecture Diagram
-
-```mermaid
-flowchart TD
-  U[User (Chat/App/Bot)] -- natural language --> O[Orchestrator]
-
-  subgraph Registry_Validation [Registry & Validation]
-    R[Registry\nname + version + schema + handler]
-    V[Validators\n(json_schemer)]
-    I[Idempotency\nchat-{thread}-{hex}]
-  end
-
-  O -- tools (schemas + descriptions) --> L[LLM Adapter]
-  L -- messages + tools --> LLM[LLM (OpenAI)]
-  LLM -- assistant text or tool call --> O
-
-  O -- validate args --> V
-  O -- resolve tool --> R
-  O -- generate key --> I
-  O -- call handler(args + ctx + key) --> H[Handlers]
-  H -- result (IDs, JSON) --> O
-
-  O -- tool result message --> L
-  O -- final reply --> U
-
-  subgraph Infra
-    S[StoreMemory / Redis\n(tool results by thread)]
-  end
-  O <--> S
-```
-
----
-
 ## How it works (Architecture)
 
 When you talk to the assistant, several components collaborate:
