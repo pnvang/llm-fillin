@@ -1,225 +1,257 @@
 # llm-fillin
 
-**LLM-powered slot filling + tool orchestration for Ruby.**  
-Turn natural language into structured, validated function calls.  
-`llm-fillin` provides the glue between an LLM and your backend services.
+Ruby core for Rails-native AI intake forms and slot-filling workflows.
 
----
+`llm-fillin` turns messy user messages into structured Ruby actions. Define the fields your backend needs, let an LLM extract candidate values, validate them, ask concise follow-up questions, confirm with the user, and execute your handler once.
 
-## Install
-```bash
-bundle install
-```
+It is framework-light Ruby, designed to power Rails apps. It is not a broad agent framework.
 
-## Configure
-Set your OpenAI API key:
-```bash
-export OPENAI_API_KEY=sk-...
-```
+## Why Slot Filling
 
-## Run the demo
-```bash
-ruby examples/run_create_toy.rb
-```
+Generic chatbots are open-ended. Intake workflows are constrained.
 
----
+With `llm-fillin`, your app owns the workflow:
 
-## Example Conversation
+- Required fields are explicit.
+- Values are validated before backend code runs.
+- Missing or invalid slots become follow-up questions.
+- Confirmation can be required before submit.
+- Handlers run behind idempotency keys to avoid duplicate backend actions.
 
-```text
-AI: Got it! You want a red race car toy for $12. Could you please provide a name for this toy?
-YOU: Supra
-AI: You want a red race car toy named "Supra" for $12. Just to confirm, is the category of the toy "car"?
-YOU: what other category are there?
-AI: The toy categories available are plush, puzzle, doll, car, lego, and other. Would you like to proceed with the "car" category for the red race car toy named Supra?
-YOU: make it lego
-AI: You want a red Lego race car toy priced at $12. Just to confirm, is the toy name "Supra"?
-YOU: yes
-✅ Toy created: Supra (lego, red) - $12.0 | ID TOY-6A99ED
-```
-
----
-
-## Quick Start (using as a gem)
-
-Once you’ve installed the gem:
+## Installation
 
 ```ruby
 gem "llm-fillin"
 ```
 
-and bundled:
+Then:
 
 ```bash
 bundle install
 ```
 
-You can use it in your app like this:
+Provider SDKs are optional. Add `gem "openai"` or `gem "ruby_llm"` in your app only when you use those adapters.
+
+## Define An Intake Workflow
 
 ```ruby
 require "llm/fillin"
-require "json"
 
-# 1. Create a registry and register your tools
-registry = LLM::Fillin::Registry.new
+LlmFillin.define(:booking_lead) do
+  description "Collect event details before creating a booking lead"
 
-CREATE_TOY_V1 = {
-  "type" => "object",
-  "properties" => {
-    "name"     => { "type" => "string" },
-    "category" => { "type" => "string", "enum" => %w[plush puzzle doll car lego other] },
-    "price"    => { "type" => "integer" },
-    "color"    => { "type" => "string" }
-  },
-  "required" => %w[name category price color]
-}
+  slot :name, type: :string, required: true
+  slot :email, type: :string, required: true, format: :email
+  slot :event_date, type: :date, required: true
+  slot :start_time, type: :string, required: true
+  slot :end_time, type: :string, required: true
+  slot :location, type: :string, required: true
+  slot :guest_count, type: :integer, required: false
+  slot :package, type: :string, enum: ["Gold", "Platinum", "Emerald"], required: false
+  slot :backdrop, type: :string, required: false
+  slot :tax_exempt, type: :boolean, required: false
 
-registry.register!(
-  name: "create_toy", version: "v1",
-  schema: CREATE_TOY_V1,
-  description: "Create a toy with name, category, price, and color.",
-  handler: ->(args, ctx) {
-    key = "chat-#{ctx[:thread_id]}-#{SecureRandom.hex(6)}"
-    { id: "TOY-#{SecureRandom.hex(4)}", idempotency_key: key }.merge(args)
-  }
-)
+  confirm_before_submit true
 
-# 2. Set up the adapter, store, and orchestrator
-adapter = LLM::Fillin::OpenAIAdapter.new(
-  api_key: ENV.fetch("OPENAI_API_KEY"),
-  model: "gpt-4o-mini"
-)
-
-store = LLM::Fillin::StoreMemory.new
-orchestrator = LLM::Fillin::Orchestrator.new(
-  adapter: adapter,
-  registry: registry,
-  store: store
-)
-
-# 3. Send messages through the orchestrator
-thread_id = "demo-thread"
-tenant_id = "demo-tenant"
-actor_id  = "demo-user"
-
-loop do
-  print "YOU: "
-  user_input = STDIN.gets.strip
-  break if user_input.empty?
-
-  res = orchestrator.step(
-    thread_id: thread_id,
-    tenant_id: tenant_id,
-    actor_id: actor_id,
-    messages: [{ role: "user", content: user_input }]
-  )
-
-  case res[:type]
-  when :assistant
-    puts "AI: #{res[:text]}"
-  when :tool_ran
-    puts "✅ Tool ran: #{res[:tool_name]} => #{res[:result].to_json}"
+  handler do |values, context|
+    BookingLead.create!(
+      values.merge(
+        account_id: context[:tenant_id],
+        created_by_id: context[:actor_id],
+        idempotency_key: context[:idempotency_key]
+      )
+    )
   end
 end
 ```
 
-### Example Run
-```text
-YOU: create me a toy for $15
-AI: Got it! What’s the name of the toy?
-YOU: Pikachu
-AI: Great, should the category be plush, puzzle, doll, car, lego, or other?
-YOU: plush
-AI: And what color should Pikachu be?
-YOU: yellow
-✅ Tool ran: create_toy => {"id":"TOY-5A9F","idempotency_key":"chat-demo-thread-...","name":"Pikachu","category":"plush","price":1500,"color":"yellow"}
-```
+## Run A Conversation Step
 
----
-
-## How it works (Architecture)
-
-When you interact with the assistant, several components collaborate:
-
-### 1) Registry
-The `Registry` is where tools (functions) are registered so the LLM can call them.  
-Each tool has:
-- `name` + `version`
-- `schema` (JSON Schema that defines the inputs)
-- `description` (human-readable prompt for the LLM)
-- `handler` (Ruby lambda that executes the action)
-
-**Example**
 ```ruby
-registry.register!(
-  name: "create_toy", version: "v1",
-  schema: CREATE_TOY_V1,
-  description: "Create a toy with name, category, price, and color.",
-  handler: ->(args, ctx) { Toy.create!(args.merge(ctx)) }
+workflow = LlmFillin.workflow(:booking_lead)
+adapter = LlmFillin::Adapters::OpenAI.new(
+  api_key: ENV.fetch("OPENAI_API_KEY"),
+  model: "gpt-4.1-mini"
 )
+
+intake = LlmFillin::Intake.new(workflow, adapter: adapter)
+
+result = intake.step(
+  "I need a Gold package for 75 guests on June 20 from 6 to 10.",
+  state: session[:booking_lead_intake],
+  context: {
+    tenant_id: current_account.id,
+    actor_id: current_user.id,
+    thread_id: session.id
+  }
+)
+
+session[:booking_lead_intake] = result.state
+render json: result.to_h
 ```
 
-### 2) Validators
-All arguments are validated with [`json_schemer`](https://github.com/davishmcclurg/json_schemer) before a handler is called:
-- Required fields must exist
-- Types must match (string, integer, enum, etc.)
-- No unexpected fields are allowed
+## Handling Missing Fields
 
-This keeps your backend safe.
+If required slots are missing, the result is structured for Rails to render:
 
-### 3) Idempotency
-When creating resources, an idempotency key is generated with:
 ```ruby
-"chat-<thread_id>-#{SecureRandom.hex(6)}"
+result.status        #=> :needs_clarification
+result.message       #=> "What is the email?"
+result.slots         #=> { name: "Mina", event_date: "2026-06-20" }
+result.missing_slots #=> [:email, :start_time, :end_time, :location]
 ```
-This ensures the same request doesn’t create duplicates.
 
-### 4) Orchestrator
-The orchestrator coordinates everything:
-- Supplies registered tools to the LLM
-- Tracks conversation state and tool results
-- Parses LLM output (text vs. function call)
-- Validates arguments and calls the handler
-- Stores tool results in memory
+## Validation
 
-This is what lets the AI ask for missing fields naturally.
+Slots are validated before handlers run. Supported slot options include `type`, `required`, `format: :email`, and `enum`.
 
-### 5) Adapters
-Adapters handle communication with the LLM.  
-Currently there’s an `OpenAIAdapter` that:
-- Sends prompts, tools, and messages to OpenAI
-- Parses responses (`tool_calls` or legacy `function_call`)
-- Wraps tool results for reuse in the conversation
+```ruby
+result.status        #=> :invalid
+result.invalid_slots #=> { email: ["must be a valid email"] }
+result.message       #=> "Please provide a valid email."
+```
 
-Other adapters could be added later for Anthropic, Mistral, or local LLMs.
+Each workflow can also expose a JSON schema:
 
-### 6) StoreMemory
-A simple in-memory store for tool results by thread.  
-In production, this could be replaced by Redis or a database.
+```ruby
+LlmFillin.workflow(:booking_lead).to_json_schema
+```
 
----
+## Confirmation Before Execution
 
-## End-to-End Flow
-1. **User says**: `"I want a red race car toy for $12"`.
-2. **LLM identifies intent**: `"create_toy_v1"`.
-3. **LLM fills slots**: price = 1200, color = red. Missing: name, category.
-4. **LLM asks user**: “What’s the name?” → “Supra”.
-5. **LLM asks user**: “Is the category car?” → “make it lego”.
-6. **Arguments validated** by `Validators`.
-7. **Handler executes** with args + context + idempotency key.
-8. **Result returned**: structured hash (toy ID, name, category, etc.).
-9. **Assistant replies**: ✅ Toy created.
+When `confirm_before_submit true` is set, the workflow pauses after all required slots are valid:
 
----
+```ruby
+result.status
+#=> :needs_confirmation
 
-## Use in your app
-- Define tools (schemas + handlers).
-- Register them in the `Registry`.
-- Wire the `Orchestrator` with an `Adapter` and a `Store`.
-- Pass messages into `orchestrator.step`.
-- Handle either assistant replies or tool execution results.
+result.ready_to_confirm?
+#=> true
+```
 
----
+Send the next user message with the saved state:
+
+```ruby
+confirmed = intake.step("yes", state: result.state, context: context)
+
+confirmed.status
+#=> :executed
+
+confirmed.execution_result
+#=> # handler return value
+```
+
+## Idempotency
+
+Every ready workflow gets an idempotency key derived from workflow name, context, and values unless you pass one explicitly.
+
+```ruby
+result.idempotency_key
+#=> "intake-..."
+```
+
+The default in-memory idempotency store prevents duplicate execution inside a process. In Rails, pass a persistent store with `fetch(key)` and `store(key, execution)` if duplicate protection must survive process restarts:
+
+```ruby
+store = MyRedisBackedIdempotencyStore.new
+intake = LlmFillin::Intake.new(workflow, adapter: adapter, idempotency: store)
+```
+
+The result state also records completed execution data, so saving `result.state` in a session or conversation row helps prevent double-submit retries.
+
+## Result Object
+
+```ruby
+result.status              # :collecting, :needs_clarification, :needs_confirmation, :invalid, :executed, :error
+result.message             # concise user-facing next step
+result.slots               # filled and coerced values
+result.missing_slots       # required slots still missing
+result.invalid_slots       # invalid slot errors
+result.ready_to_confirm?   # true when valid values need user confirmation
+result.ready_to_execute?   # true when validation and confirmation have passed
+result.executed?           # true after handler completion or idempotent replay
+result.execution_result    # handler return value
+result.idempotency_key     # stable key for this submission
+result.to_h                # JSON-friendly hash
+```
+
+## Provider Adapters
+
+Adapters are intentionally small. The core gem asks an adapter to extract slots:
+
+```ruby
+adapter.extract(
+  workflow: workflow,
+  message: "My email is mina@example.com",
+  slots: {},
+  context: {}
+)
+#=> { email: "mina@example.com" }
+```
+
+Included adapters:
+
+- `LlmFillin::Adapters::Fake` for tests and demos.
+- `LlmFillin::Adapters::OpenAI` for OpenAI, optional `openai` gem required.
+- `LlmFillin::Adapters::RubyLLM` for RubyLLM, optional `ruby_llm` gem required.
+
+Custom adapters can subclass `LlmFillin::Adapters::Base` and implement `#extract`.
+
+## Minimal Rails Controller Shape
+
+```ruby
+class IntakeStepsController < ApplicationController
+  def create
+    intake = LlmFillin::Intake.new(
+      LlmFillin.workflow(params[:workflow_name]),
+      adapter: Rails.application.config.x.llm_fillin_adapter,
+      idempotency: Rails.application.config.x.llm_fillin_idempotency
+    )
+
+    result = intake.step(
+      params[:message],
+      state: session["intake_#{params[:workflow_name]}"],
+      context: {
+        tenant_id: current_account.id,
+        actor_id: current_user.id,
+        thread_id: session.id
+      }
+    )
+
+    session["intake_#{params[:workflow_name]}"] = result.state
+    render json: result.to_h
+  end
+end
+```
+
+Rails-specific engine behavior belongs in `llm-agent-rails`; this gem stays small and Ruby-ish.
+
+## How This Relates To llm-agent-rails
+
+`llm-fillin` is the framework-light Ruby core: workflow definitions, slot validation, confirmation, result objects, provider adapters, and idempotent handler execution.
+
+`llm-agent-rails` adds the Rails-native layer: autoloaded intake classes, ActiveRecord persistence, JSON endpoints, Rails generators, and dummy/demo app patterns.
+
+## Examples
+
+- `examples/support_ticket_intake.rb`
+- `examples/booking_lead_intake.rb`
+- `examples/quote_request_intake.rb`
+
+All examples use the fake adapter and require no API keys.
+
+## Backwards Compatibility
+
+The 0.1 `LLM::Fillin` namespace, JSON-schema tool registry, and tool-call orchestrator remain available where practical. The 0.2 API is `LlmFillin.define` plus intake workflows.
+
+## Tests
+
+```bash
+bundle exec ruby -Itest -Ilib test/intake_workflow_test.rb
+```
+
+No API keys are required.
 
 ## License
+
 MIT
