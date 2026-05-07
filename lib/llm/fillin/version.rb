@@ -1,6 +1,5 @@
-# lib/llm/fillin/version.rb
-module LLM
-  module Fillin
-    VERSION = "0.1.1"
-  end
+# frozen_string_literal: true
+
+module LlmFillin
+  VERSION = "0.2.0"
 end

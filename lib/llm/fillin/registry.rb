@@ -1,37 +1,70 @@
 # frozen_string_literal: true
-module LLM
-  module Fillin
-    Tool = Struct.new(:name, :version, :schema, :description, :handler, keyword_init: true)
 
-    class Registry
-      def initialize
-        @tools = {}
-      end
+module LlmFillin
+  Tool = Struct.new(:name, :version, :schema, :description, :handler, keyword_init: true)
 
-      def register!(name:, version:, schema:, description:, handler:)
-        @tools[key_for(name, version)] = Tool.new(name:, version:, schema:, description:, handler:)
-      end
+  class Registry
+    def initialize
+      @tools = {}
+      @workflows = {}
+    end
 
-      def tool(name, version: "v1")
-        @tools.fetch(key_for(name, version))
-      end
+    # 0.2 intake-workflow registration.
+    def register(workflow)
+      @workflows[workflow.name] = workflow
+      workflow
+    end
+    alias register_workflow register
 
-      def tools_for_llm
-        @tools.values.map do |t|
-          {
-            type: "function",
-            function: {
-              name: "#{t.name}_#{t.version}",
-              description: t.description,
-              parameters: t.schema
-            }
+    def define(name, &block)
+      register(Workflow.define(name, &block))
+    end
+
+    def fetch(name)
+      @workflows.fetch(name.to_sym)
+    end
+    alias workflow fetch
+
+    def [](name)
+      @workflows[name.to_sym]
+    end
+
+    def workflows
+      @workflows.values
+    end
+
+    # 0.1 tool registration, kept for existing apps.
+    def register!(name:, version:, schema:, description:, handler:)
+      @tools[key_for(name, version)] = Tool.new(
+        name: name,
+        version: version,
+        schema: schema,
+        description: description,
+        handler: handler
+      )
+    end
+
+    def tool(name, version: "v1")
+      @tools.fetch(key_for(name, version))
+    end
+
+    def tools_for_llm
+      @tools.values.map do |tool|
+        {
+          type: "function",
+          function: {
+            name: "#{tool.name}_#{tool.version}",
+            description: tool.description,
+            parameters: tool.schema
           }
-        end
+        }
       end
+    end
 
-      private
+    private
 
-      def key_for(name, version) = "#{name}:#{version}"
+    def key_for(name, version)
+      "#{name}:#{version}"
     end
   end
 end
