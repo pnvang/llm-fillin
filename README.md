@@ -1,6 +1,6 @@
 # llm-fillin
 
-Rails-native AI intake forms and slot-filling workflows for Ruby.
+Ruby core for Rails-native AI intake forms and slot-filling workflows.
 
 `llm-fillin` turns messy user messages into structured Ruby actions. Define the fields your backend needs, let an LLM extract candidate values, validate them, ask concise follow-up questions, confirm with the user, and execute your handler once.
 
@@ -225,6 +225,12 @@ end
 ```
 
 Rails-specific engine behavior belongs in `llm-agent-rails`; this gem stays small and Ruby-ish.
+
+## How This Relates To llm-agent-rails
+
+`llm-fillin` is the framework-light Ruby core: workflow definitions, slot validation, confirmation, result objects, provider adapters, and idempotent handler execution.
+
+`llm-agent-rails` adds the Rails-native layer: autoloaded intake classes, ActiveRecord persistence, JSON endpoints, Rails generators, and dummy/demo app patterns.
 
 ## Examples
 
